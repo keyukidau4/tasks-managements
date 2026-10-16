@@ -10,6 +10,7 @@ import { configurationSchema } from './config/configuration.schema';
 import { HealthModule } from './health/health.module';
 import { HomeModule } from './home/home.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { PrismaModule } from './prisma/prisma.module';
     HealthModule,
     HomeModule,
     PrismaModule,
+    AuthModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

@@ -34,6 +34,11 @@ export const configurationSchema = Joi.object({
     .default(
       'postgresql://task_app:task_app_local@localhost:5432/task_management?schema=public',
     ),
+  JWT_ACCESS_SECRET: Joi.string().min(32).when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
   CORS_ORIGINS: Joi.string()
     .custom(validOrigins, 'comma-separated HTTP origins')
     .default('http://localhost:5173'),

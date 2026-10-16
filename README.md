@@ -41,6 +41,8 @@ npm run start:dev
 
 `.env` を作成しない場合も既定値で起動できます。ポートは `PORT`、ブラウザーからの接続を許可する origin は `CORS_ORIGINS`（カンマ区切り）で設定できます。許可 origin は完全な `http://` または `https://` origin で指定してください。設定対象の環境変数に不正な値がある場合、API は起動時にエラーにします。
 
+認証 API は `POST /auth/register`、`POST /auth/login`、`POST /auth/refresh`、`POST /auth/logout`、`GET /auth/me` を提供します。ログイン応答の refresh token は次回更新またはログアウト時に JSON body で送信します。アクセス token は 15 分の HS256 JWT、refresh token は 7 日のランダム token で、DB には SHA-256 hash のみ保存します。register / login / refresh / logout は各 route あたり 1 分 5 回に制限します。開発時の JWT secret はプロセスごとにランダム生成され、再起動すると既存 access token は無効になります。本番では `JWT_ACCESS_SECRET`（32 文字以上）を secret store から渡してください。値が未設定または短い場合、production 起動時の検証に失敗します。秘密値を `.env.example` やその他の version 管理対象ファイルに書かないでください。
+
 ## ローカル依存サービス
 
 PostgreSQL 16、Redis 7、Mailpit、MinIO を起動する場合は、`api/` で次を実行します。
