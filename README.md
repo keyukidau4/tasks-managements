@@ -60,16 +60,22 @@ docker compose up -d
 
 Compose は `.env` の値を使用し、未設定の場合は `.env.example` と同じローカル専用値を使用します。これらの初期値をローカル開発以外で使用しないでください。サービスを停止するには `docker compose down` を実行します。データ volume も削除する場合は `docker compose down -v` を実行してください。
 
-Redis、Mailpit、MinIO との API 接続、Workspace 以降の業務用 DB schema / migration は未実装です。Compose は開発依存サービスの起動環境を用意するもので、業務機能を有効化するものではありません。
+Redis、Mailpit、MinIO との API 接続、各業務機能の API は未実装です。Prisma には User / Workspace と Task 管理用テーブルの schema / migration を含みます。Compose は開発依存サービスの起動環境を用意するもので、業務機能を有効化するものではありません。
 
-API は Prisma Client を使って PostgreSQL に接続します。`User` / `RefreshToken` の schema と migration を含みます。PostgreSQL を起動してから、開発環境では migration の作成・適用に以下を使います。
+API は Prisma Client を使って PostgreSQL に接続します。`User` / `RefreshToken` / `Workspace` / `WorkspaceMember` / `Project` / `Task` / `TaskComment` / `TaskAttachment` / `AuditLog` の schema と migration を含みます。Project と Task は `deleted_at` による soft delete を使用します。通常削除ではレコードを保持し、関連コメント・添付も保持します。task の関連データが cascade delete されるのは task を物理削除した場合のみです。監査ログの `entity_id` は複数種類の entity を参照する polymorphic ID のため、単一テーブルへの FK は設定していません。
+
+DB constraint は workspace member の workspace/user の組み合わせ、user email、refresh token hash、attachment file key を unique にします。Workspace member role、task status / priority、task version、attachment size は許可値・正数を CHECK 制約で検証します。Project / Task の soft delete 済みデータを含めて一意性を保つため、名前の unique 制約は付けていません。User や Project の履歴参照は物理削除を制限し、task assignee が物理削除された場合は assignee を NULL にします。Task の物理削除時のみ comment / attachment は cascade delete されます。
+
+PostgreSQL を起動してから、`npm run prisma:deploy` で既存 migration を適用できます。開発中に schema を変更して新しい migration を作る場合は次を使います。
 
 ```bash
 npm run prisma:generate
-npm run prisma:migrate -- --name user_refresh_tokens
+npm run prisma:migrate -- --name task_schema
 ```
 
 既存 migration を production 等に適用するには `npm run prisma:deploy` を実行します。開発用ユーザーの初期化は任意です。`.env` に `SEED_USER_EMAIL`、`SEED_USER_NAME`、`SEED_USER_PASSWORD_HASH`（平文ではなく、アプリケーションで利用する password hash）を設定してから `npm run prisma:seed` を実行します。seed は production では実行できず、同じ email の既存ユーザーは変更しません。Prisma Studio は `npm run prisma:studio` で起動します。接続先は `DATABASE_URL` で設定し、ローカル既定値は `api/.env.example` を参照してください。
+
+実際の接続情報や秘密鍵は version 管理対象のファイルに記載せず、ignore 対象の `api/.env` かデプロイ環境の secret store に設定してください。`.env.example` と Compose の既定 credentials はローカル開発専用であり、production では使用しないでください。
 
 ## 利用可能なコマンド
 
@@ -102,8 +108,8 @@ npm run prisma:migrate -- --name user_refresh_tokens
 
 以下の業務機能は未実装です。
 
-- Workspace 以降の業務データ用 PostgreSQL schema / migration（User / RefreshToken は実装済み）
-- 新規登録、ログイン、JWT、Workspace / Project / Task 等の API
+- Workspace / Project / Task / comment / attachment / audit log の API と業務ロジック
+- 新規登録、ログイン、JWT
 - Redis/BullMQ による email job、Nodemailer、MinIO 連携
 - Swagger / OpenAPI
 
