@@ -2,101 +2,127 @@
 
 チームのタスク・進捗管理アプリケーション向けのバックエンド REST API です。NestJS と TypeScript で構築しています。
 
-現在のリポジトリには NestJS の初期 scaffold が含まれています。設計書に記載されているデータベース、認証、業務機能は、まだ実装されていません。
-
 ## 必要な環境
 
-- Node.js 22 LTS（現在の NestJS 11 ツールチェーンには Node.js 20.11 以降が必要です）
+- Node.js 22 LTS（NestJS 11 は Node.js 20.11 以降が必要です）
 - npm
 - Git
-
-現時点の scaffold を起動するために PostgreSQL、Redis、MinIO、Docker、Docker Compose は不要です。各サービスとの連携を実装した段階で必要になります。
+- Docker Desktop（PostgreSQL、Redis、Mailpit、MinIO を起動する場合）
 
 ## Clone と起動方法
 
-ターミナルでリポジトリを clone し、API プロジェクトのディレクトリに移動します。
-
 ```bash
 git clone https://github.com/keyukidau4/tasks-managements
+cd tasks-managements/api
 npm ci
-npm run start:dev
 ```
 
-開発サーバーは、既定でポート `3000` を使用します。[http://localhost:3000](http://localhost:3000) を開くと、初期 scaffold のエンドポイントから `Hello World!` が返ります。
+`.env` は API 起動時に必須ではありません。PostgreSQL 接続 URL はローカル開発用の既定値が設定されています。PostgreSQL を含む依存サービスを起動してから API を実行してください。ポートや CORS 許可 origin、DB 接続 URL を変更する場合は、サンプルをコピーして編集します。
 
-ポートを変更する場合は、起動前に環境変数 `PORT` を設定してください。
+macOS / Linux:
 
 ```bash
-# macOS / Linux
-PORT=3001 npm run start:dev
+cp .env.example .env
 ```
 
+Windows PowerShell:
+
 ```powershell
-# Windows PowerShell
-$env:PORT = "3001"
+Copy-Item .env.example .env
+```
+
+開発サーバーを起動します。
+
+```bash
 npm run start:dev
 ```
 
-開発サーバーを停止するには `Ctrl+C` を押してください。
+既定では `http://localhost:3000` で起動します。`GET /` は `Hello World!` を共通 response envelope で返し、`GET /health` はヘルス状態を返します。開発サーバーを停止するには `Ctrl+C` を押してください。
+
+`.env` を作成しない場合も既定値で起動できます。ポートは `PORT`、ブラウザーからの接続を許可する origin は `CORS_ORIGINS`（カンマ区切り）で設定できます。許可 origin は完全な `http://` または `https://` origin で指定してください。設定対象の環境変数に不正な値がある場合、API は起動時にエラーにします。
+
+## ローカル依存サービス
+
+PostgreSQL 16、Redis 7、Mailpit、MinIO を起動する場合は、`api/` で次を実行します。
+
+```bash
+docker compose up -d
+```
+
+| Service       | URL / Port                                     | 用途                    |
+| ------------- | ---------------------------------------------- | ----------------------- |
+| PostgreSQL    | `localhost:5432`                               | Database                |
+| Redis         | `localhost:6379`                               | Queue / rate-limit 基盤 |
+| Mailpit UI    | [http://localhost:8025](http://localhost:8025) | 開発用メールの確認      |
+| Mailpit SMTP  | `localhost:1025`                               | 開発用 SMTP             |
+| MinIO API     | `localhost:9000`                               | S3-compatible storage   |
+| MinIO Console | [http://localhost:9001](http://localhost:9001) | 開発用ファイル管理      |
+
+Compose は `.env` の値を使用し、未設定の場合は `.env.example` と同じローカル専用値を使用します。これらの初期値をローカル開発以外で使用しないでください。サービスを停止するには `docker compose down` を実行します。データ volume も削除する場合は `docker compose down -v` を実行してください。
+
+Redis、Mailpit、MinIO との API 接続、業務用 DB schema、migration は未実装です。Compose は開発依存サービスの起動環境を用意するもので、業務機能を有効化するものではありません。
+
+API は Prisma Client を使って PostgreSQL に接続します。開発用の初期 schema/migration はまだありません。モデル追加後、migration の作成・適用には以下を使います。
+
+```bash
+npm run prisma:generate
+npm run prisma:migrate -- --name init
+```
+
+既存 migration を production 等に適用するには `npm run prisma:deploy` を実行します。Prisma Studio は `npm run prisma:studio` で起動します。接続先は `DATABASE_URL` で設定し、ローカル既定値は `api/.env.example` を参照してください。
 
 ## 利用可能なコマンド
 
-以下のコマンドは ディレクトリで実行してください。
+すべて `api/` ディレクトリで実行してください。
 
-| コマンド | 説明 |
-| --- | --- |
-| `npm run start:dev` | watch モードで API を起動 |
-| `npm run start` | watch モードなしで API を起動 |
-| `npm run build` | アプリケーションを `dist/` にコンパイル |
-| `npm run start:prod` | コンパイル済みアプリケーションを実行 |
-| `npm test` | unit test を実行 |
-| `npm run test:e2e` | end-to-end test を実行 |
-| `npm run test:cov` | coverage を計測しながら unit test を実行 |
-| `npm run format` | Prettier でソースとテストファイルを整形 |
-| `npm run lint` | ESLint を実行（設定済みコマンドは修正も適用します） |
-
-ローカルで production build を実行する場合：
-
-```bash
-npm ci
-npm run build
-npm run start:prod
-```
+| コマンド                                  | 説明                                                |
+| ----------------------------------------- | --------------------------------------------------- |
+| `npm run start:dev`                       | watch モードで API を起動                           |
+| `npm run start`                           | watch モードなしで API を起動                       |
+| `npm run build`                           | アプリケーションを `dist/` にコンパイル             |
+| `npm run start:prod`                      | コンパイル済みアプリケーションを実行                |
+| `npm test`                                | unit test を実行                                    |
+| `npm run test:e2e`                        | end-to-end test を実行                              |
+| `npm run test:cov`                        | coverage を計測しながら unit test を実行            |
+| `npm run prisma:generate`                 | Prisma Client を生成                                |
+| `npm run prisma:migrate -- --name <name>` | 開発用 migration を作成・適用                       |
+| `npm run prisma:deploy`                   | 既存 migration を適用                               |
+| `npm run prisma:studio`                   | Prisma Studio を起動                                |
+| `npm run format`                          | Prettier でソースとテストファイルを整形             |
+| `npm run lint`                            | ESLint を実行（設定済みコマンドは修正も適用します） |
 
 ## 現在の実装状況
 
-現在の API は NestJS の初期 scaffold です。
+- `GET /` と `GET /health` を提供します。
+- 成功 response は `{ "success": true, "data": ... }`、error response は設計書に沿った envelope で返します。
+- 環境変数の起動時検証、DTO validation、例外処理、request ID 付き Pino logging を設定しています。
+- Helmet、CORS allowlist、全体の rate limit を設定しています。認証 route 用の `AuthRateLimit` decorator は認証 API の追加時に適用します。
+- 初期 scaffold、response envelope、health check、error response、request ID の unit test / e2e test が含まれます。
 
-- `GET /` は `Hello World!` を返します。
-- 初期の unit test と e2e test が含まれています。
-- データベース接続や環境設定ファイルは必要ありません。
+以下の業務機能は未実装です。
 
-以下はバックエンド設計に含まれていますが、まだ利用できません。
-
-- PostgreSQL 16、Prisma schema、migration
-- 新規登録、ログイン、JWT access/refresh token、role-based authorization
-- Workspace、project、task、comment、attachment、statistics の各 API
-- Redis/BullMQ によるメールジョブ、Nodemailer/Mailpit、MinIO ファイルストレージ
-- Swagger/OpenAPI ドキュメント、Docker Compose サービス
-
-アプリケーションコードとローカル実行環境が追加されるまでは、本番用認証情報を設定したり、これらのサービスが動作すると想定したりしないでください。
-
-## 設計書
-
-バックエンドの要件、API 設計、データモデル、ローカル開発環境、テストシナリオについては [`../basics-design.md`](../basics-design.md) を参照してください。設計書に記載された内容が、すべてこの scaffold に実装済みであることを示すものではありません。
+- 業務データ用 PostgreSQL schema / migration（Prisma 接続基盤を設定済み）
+- 新規登録、ログイン、JWT、Workspace / Project / Task 等の API
+- Redis/BullMQ による email job、Nodemailer、MinIO 連携
+- Swagger / OpenAPI
 
 ## ディレクトリ構成
 
 ```text
 src/
-  app.controller.ts
+  common/
+    decorators/
+    filters/
+    interceptors/
+  config/
+  prisma/
+  health/
+  home/
   app.module.ts
-  app.service.ts
   main.ts
 test/
-  app.e2e-spec.ts
-  jest-e2e.json
-package.json
+docker-compose.yml
+.env.example
 ```
 
-バックエンド機能の実装に合わせて、feature module と共通基盤を追加していきます。
+バックエンド機能の実装状況と次の作業は [`tasks.md`](./tasks.md)、設計は [`../basics-design.md`](../basics-design.md) を参照してください。
