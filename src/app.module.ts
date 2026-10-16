@@ -11,6 +11,9 @@ import { HealthModule } from './health/health.module';
 import { HomeModule } from './home/home.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
+import { WorkspacesModule } from './workspaces/workspaces.module';
+import { ProjectsModule } from './projects/projects.module';
+import { TasksModule } from './tasks/tasks.module';
 
 @Module({
   imports: [
@@ -61,6 +64,9 @@ import { AuthModule } from './auth/auth.module';
     HomeModule,
     PrismaModule,
     AuthModule,
+    WorkspacesModule,
+    ProjectsModule,
+    TasksModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

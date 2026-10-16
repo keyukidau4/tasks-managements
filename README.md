@@ -108,10 +108,18 @@ npm run prisma:migrate -- --name task_schema
 - Helmet、CORS allowlist、全体の rate limit を設定しています。認証 route 用の `AuthRateLimit` decorator は認証 API の追加時に適用します。
 - 初期 scaffold、response envelope、health check、error response、request ID の unit test / e2e test が含まれます。
 
+Workspace と認証の以下の endpoint を実装済みです。
+
+- `POST /auth/register`、`POST /auth/login`、`POST /auth/refresh`、`POST /auth/logout`、`GET /auth/me`
+- `POST /workspaces`、`GET /workspaces/:id`、`PATCH /workspaces/:id`。Workspace 作成時に OWNER membership を追加します。`WorkspaceRolesGuard` は workspace ID を持つ route で常に membership を検証し、ロール指定がない場合は全 membership role を許可します。取得は OWNER / ADMIN / MEMBER、更新は OWNER / ADMIN のみ許可します。
+- `POST /workspaces/:id/members`、`DELETE /workspaces/:id/members/:userId`。既存ユーザーを email で MEMBER として追加し、OWNER / ADMIN が非 OWNER メンバーを削除できます。workspace owner 自身は削除できません。
+- `POST /workspaces/:id/projects`、`GET /workspaces/:id/projects`、`GET /projects/:id`、`PATCH /projects/:id`、`DELETE /projects/:id`。全 endpoint で workspace membership を検証し、一覧と詳細は全 role、作成・更新・削除は OWNER / ADMIN のみ許可します。削除は `deleted_at` を設定する soft delete です。
+- `POST /projects/:id/tasks`、`GET /projects/:id/tasks`、`GET /tasks/:id`、`PATCH /tasks/:id`、`DELETE /tasks/:id`。全 endpoint で project の workspace membership を検証し、全 workspace role に CRUD を許可します。削除は `deleted_at` を設定する soft delete です。assignee は同じ workspace の member に限られます。
+
 以下の業務機能は未実装です。
 
-- Workspace / Project / Task / comment / attachment / audit log の API と業務ロジック
-- 新規登録、ログイン、JWT
+- Task の status / priority 変更、filter / sort / pagination、optimistic locking、audit log 連携
+- comment / attachment / audit log の API と業務ロジック
 - Redis/BullMQ による email job、Nodemailer、MinIO 連携
 - Swagger / OpenAPI
 
@@ -125,6 +133,8 @@ src/
     interceptors/
   config/
   prisma/
+  auth/
+  workspaces/
   health/
   home/
   app.module.ts
