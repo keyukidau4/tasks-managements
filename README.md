@@ -60,16 +60,16 @@ docker compose up -d
 
 Compose は `.env` の値を使用し、未設定の場合は `.env.example` と同じローカル専用値を使用します。これらの初期値をローカル開発以外で使用しないでください。サービスを停止するには `docker compose down` を実行します。データ volume も削除する場合は `docker compose down -v` を実行してください。
 
-Redis、Mailpit、MinIO との API 接続、業務用 DB schema、migration は未実装です。Compose は開発依存サービスの起動環境を用意するもので、業務機能を有効化するものではありません。
+Redis、Mailpit、MinIO との API 接続、Workspace 以降の業務用 DB schema / migration は未実装です。Compose は開発依存サービスの起動環境を用意するもので、業務機能を有効化するものではありません。
 
-API は Prisma Client を使って PostgreSQL に接続します。開発用の初期 schema/migration はまだありません。モデル追加後、migration の作成・適用には以下を使います。
+API は Prisma Client を使って PostgreSQL に接続します。`User` / `RefreshToken` の schema と migration を含みます。PostgreSQL を起動してから、開発環境では migration の作成・適用に以下を使います。
 
 ```bash
 npm run prisma:generate
-npm run prisma:migrate -- --name init
+npm run prisma:migrate -- --name user_refresh_tokens
 ```
 
-既存 migration を production 等に適用するには `npm run prisma:deploy` を実行します。Prisma Studio は `npm run prisma:studio` で起動します。接続先は `DATABASE_URL` で設定し、ローカル既定値は `api/.env.example` を参照してください。
+既存 migration を production 等に適用するには `npm run prisma:deploy` を実行します。開発用ユーザーの初期化は任意です。`.env` に `SEED_USER_EMAIL`、`SEED_USER_NAME`、`SEED_USER_PASSWORD_HASH`（平文ではなく、アプリケーションで利用する password hash）を設定してから `npm run prisma:seed` を実行します。seed は production では実行できず、同じ email の既存ユーザーは変更しません。Prisma Studio は `npm run prisma:studio` で起動します。接続先は `DATABASE_URL` で設定し、ローカル既定値は `api/.env.example` を参照してください。
 
 ## 利用可能なコマンド
 
@@ -87,6 +87,7 @@ npm run prisma:migrate -- --name init
 | `npm run prisma:generate`                 | Prisma Client を生成                                |
 | `npm run prisma:migrate -- --name <name>` | 開発用 migration を作成・適用                       |
 | `npm run prisma:deploy`                   | 既存 migration を適用                               |
+| `npm run prisma:seed`                     | 環境変数から開発用ユーザーを初期化（任意）          |
 | `npm run prisma:studio`                   | Prisma Studio を起動                                |
 | `npm run format`                          | Prettier でソースとテストファイルを整形             |
 | `npm run lint`                            | ESLint を実行（設定済みコマンドは修正も適用します） |
@@ -101,7 +102,7 @@ npm run prisma:migrate -- --name init
 
 以下の業務機能は未実装です。
 
-- 業務データ用 PostgreSQL schema / migration（Prisma 接続基盤を設定済み）
+- Workspace 以降の業務データ用 PostgreSQL schema / migration（User / RefreshToken は実装済み）
 - 新規登録、ログイン、JWT、Workspace / Project / Task 等の API
 - Redis/BullMQ による email job、Nodemailer、MinIO 連携
 - Swagger / OpenAPI
