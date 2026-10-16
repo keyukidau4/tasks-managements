@@ -45,7 +45,7 @@ npm run start:dev
 
 ## ローカル依存サービス
 
-PostgreSQL 16、Redis 7、Mailpit、MinIO を起動する場合は、`api/` で次を実行します。
+PostgreSQL 16、Redis 7、Mailpit、MinIO を起動する場合は、`api/` で次を実行します。MinIO の `MINIO_ACCESS_KEY` と `MINIO_SECRET_KEY` は `.env` にローカルで設定し、Compose が MinIO root credentials として使用します。これらの値を version 管理対象ファイルに書かないでください。
 
 ```bash
 docker compose up -d
@@ -60,9 +60,9 @@ docker compose up -d
 | MinIO API     | `localhost:9000`                               | S3-compatible storage   |
 | MinIO Console | [http://localhost:9001](http://localhost:9001) | 開発用ファイル管理      |
 
-Compose は `.env` の値を使用し、未設定の場合は `.env.example` と同じローカル専用値を使用します。これらの初期値をローカル開発以外で使用しないでください。サービスを停止するには `docker compose down` を実行します。データ volume も削除する場合は `docker compose down -v` を実行してください。
+Compose は `.env` の値を使用します。MinIO credentials が未設定の場合は起動に失敗します。サービスを停止するには `docker compose down` を実行します。データ volume も削除する場合は `docker compose down -v` を実行してください。
 
-Redis、Mailpit、MinIO との API 接続、各業務機能の API は未実装です。Prisma には User / Workspace と Task 管理用テーブルの schema / migration を含みます。Compose は開発依存サービスの起動環境を用意するもので、業務機能を有効化するものではありません。
+Redis と Mailpit との API 接続は未実装です。Prisma には User / Workspace と Task 管理用テーブルの schema / migration を含みます。
 
 API は Prisma Client を使って PostgreSQL に接続します。`User` / `RefreshToken` / `Workspace` / `WorkspaceMember` / `Project` / `Task` / `TaskComment` / `TaskAttachment` / `AuditLog` の schema と migration を含みます。Project と Task は `deleted_at` による soft delete を使用します。通常削除ではレコードを保持し、関連コメント・添付も保持します。task の関連データが cascade delete されるのは task を物理削除した場合のみです。監査ログの `entity_id` は複数種類の entity を参照する polymorphic ID のため、単一テーブルへの FK は設定していません。
 
@@ -114,13 +114,16 @@ Workspace と認証の以下の endpoint を実装済みです。
 - `POST /workspaces`、`GET /workspaces/:id`、`PATCH /workspaces/:id`。Workspace 作成時に OWNER membership を追加します。`WorkspaceRolesGuard` は workspace ID を持つ route で常に membership を検証し、ロール指定がない場合は全 membership role を許可します。取得は OWNER / ADMIN / MEMBER、更新は OWNER / ADMIN のみ許可します。
 - `POST /workspaces/:id/members`、`DELETE /workspaces/:id/members/:userId`。既存ユーザーを email で MEMBER として追加し、OWNER / ADMIN が非 OWNER メンバーを削除できます。workspace owner 自身は削除できません。
 - `POST /workspaces/:id/projects`、`GET /workspaces/:id/projects`、`GET /projects/:id`、`PATCH /projects/:id`、`DELETE /projects/:id`。全 endpoint で workspace membership を検証し、一覧と詳細は全 role、作成・更新・削除は OWNER / ADMIN のみ許可します。削除は `deleted_at` を設定する soft delete です。
-- `POST /projects/:id/tasks`、`GET /projects/:id/tasks`、`GET /tasks/:id`、`PATCH /tasks/:id`、`DELETE /tasks/:id`。全 endpoint で project の workspace membership を検証し、全 workspace role に CRUD を許可します。削除は `deleted_at` を設定する soft delete です。assignee は同じ workspace の member に限られます。
+- `POST /projects/:id/tasks`、`GET /projects/:id/tasks`、`GET /tasks/:id`、`PATCH /tasks/:id`、`DELETE /tasks/:id`。全 endpoint で project の workspace membership を検証し、全 workspace role に CRUD を許可します。削除は `deleted_at` を設定する soft delete です。status（TODO / IN_PROGRESS / IN_REVIEW / DONE）、priority（LOW / MEDIUM / HIGH / URGENT）、assignee、due date を作成・更新できます。
+- `GET /projects/:id/tasks` は `status`、`priority`、`assigneeId`、`dueDateFrom` / `dueDateTo` で filter できます。`sortBy`（createdAt / updatedAt / dueDate / title / status / priority）と `sortOrder`（asc / desc）で sort でき、`page` / `limit` で pagination できます。response は `{ items, pagination: { page, limit, total, totalPages } }`、既定値は page 1 / limit 20、limit の最大値は 100 です。
+- Task の作成・更新と `TASK_CREATED` / `TASK_UPDATED` audit log の保存は同一 DB transaction で実行します。`PATCH /tasks/:id` は最新の `version`（1 以上の整数）を必須とし、version を条件に atomic に更新して成功時に 1 増加させます。version が古い場合は `409 CONFLICT` を返すため、最新の Task を再取得してから再試行してください。
+- `GET /tasks/:id/comments` と `POST /tasks/:id/comments` でコメントを取得・追加できます。投稿者の ID と表示名を返し、認可は task の workspace membership に基づきます。
+- `GET /tasks/:id/attachments` は添付 metadata を返し、`POST /tasks/:id/attachments` は multipart field `file` を MinIO に保存して metadata を PostgreSQL に記録します。最大サイズは 10 MiB、許可形式は signature を検証した PDF / JPEG / PNG です。task の workspace member のみ利用でき、MinIO credentials はローカル `.env` または deployment secret store から供給します。
 
 以下の業務機能は未実装です。
 
-- Task の status / priority 変更、filter / sort / pagination、optimistic locking、audit log 連携
-- comment / attachment / audit log の API と業務ロジック
-- Redis/BullMQ による email job、Nodemailer、MinIO 連携
+- attachment の download / delete API
+- Redis/BullMQ による email job、Nodemailer、Redis / Mailpit 連携
 - Swagger / OpenAPI
 
 ## ディレクトリ構成

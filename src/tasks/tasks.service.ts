@@ -1,11 +1,13 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { ListTasksQueryDto } from './dto/list-tasks-query.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 
 const taskSelect = {
@@ -38,26 +40,91 @@ export class TasksService {
       await this.requireMembership(userId, project.workspaceId, dto.assigneeId);
     }
 
-    return this.prisma.task.create({
-      data: {
-        projectId,
-        title,
-        description: dto.description?.trim() || null,
-        assigneeId: dto.assigneeId ?? null,
-        dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
-        createdBy: userId,
-      },
-      select: taskSelect,
+    return this.prisma.$transaction(async (transaction) => {
+      const task = await transaction.task.create({
+        data: {
+          projectId,
+          title,
+          description: dto.description?.trim() || null,
+          assigneeId: dto.assigneeId ?? null,
+          dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+          status: dto.status,
+          priority: dto.priority,
+          createdBy: userId,
+        },
+        select: taskSelect,
+      });
+
+      await transaction.auditLog.create({
+        data: {
+          actorId: userId,
+          action: 'TASK_CREATED',
+          entityType: 'TASK',
+          entityId: task.id,
+          metadata: {
+            projectId,
+            version: task.version,
+            status: task.status,
+            priority: task.priority,
+          },
+        },
+      });
+
+      return task;
     });
   }
 
-  async findAll(userId: string, projectId: string) {
+  async findAll(userId: string, projectId: string, query: ListTasksQueryDto) {
     await this.requireProjectMembership(userId, projectId);
-    return this.prisma.task.findMany({
-      where: { projectId, deletedAt: null },
-      orderBy: { createdAt: 'desc' },
-      select: taskSelect,
-    });
+    if (
+      query.dueDateFrom &&
+      query.dueDateTo &&
+      new Date(query.dueDateFrom) > new Date(query.dueDateTo)
+    ) {
+      throw new BadRequestException(
+        'dueDateFrom must not be later than dueDateTo',
+      );
+    }
+
+    const dueDate: Prisma.DateTimeNullableFilter = {};
+    if (query.dueDateFrom) {
+      dueDate.gte = new Date(query.dueDateFrom);
+    }
+    if (query.dueDateTo) {
+      dueDate.lte = new Date(query.dueDateTo);
+    }
+
+    const where: Prisma.TaskWhereInput = {
+      projectId,
+      deletedAt: null,
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.priority ? { priority: query.priority } : {}),
+      ...(query.assigneeId ? { assigneeId: query.assigneeId } : {}),
+      ...(Object.keys(dueDate).length ? { dueDate } : {}),
+    };
+    const orderBy: Prisma.TaskOrderByWithRelationInput = {
+      [query.sortBy]: query.sortOrder,
+    };
+    const [items, total] = await Promise.all([
+      this.prisma.task.findMany({
+        where,
+        orderBy,
+        skip: (query.page - 1) * query.limit,
+        take: query.limit,
+        select: taskSelect,
+      }),
+      this.prisma.task.count({ where }),
+    ]);
+
+    return {
+      items,
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        totalPages: Math.ceil(total / query.limit),
+      },
+    };
   }
 
   async findOne(userId: string, taskId: string) {
@@ -103,26 +170,59 @@ export class TasksService {
     if (dto.dueDate !== undefined) {
       changes.dueDate = dto.dueDate ? new Date(dto.dueDate) : null;
     }
+    if (dto.status !== undefined) {
+      changes.status = dto.status;
+    }
+    if (dto.priority !== undefined) {
+      changes.priority = dto.priority;
+    }
     if (Object.keys(changes).length === 0) {
       throw new BadRequestException('At least one task field must be provided');
     }
 
-    const result = await this.prisma.task.updateMany({
-      where: { id: task.id, deletedAt: null },
-      data: changes,
-    });
-    if (result.count === 0) {
-      throw new NotFoundException('Task not found');
-    }
+    return this.prisma.$transaction(async (transaction) => {
+      const currentTask = await transaction.task.findFirst({
+        where: { id: task.id, deletedAt: null },
+        select: { version: true },
+      });
+      if (!currentTask) {
+        throw new NotFoundException('Task not found');
+      }
 
-    const updatedTask = await this.prisma.task.findFirst({
-      where: { id: task.id, deletedAt: null },
-      select: taskSelect,
+      const result = await transaction.task.updateMany({
+        where: { id: task.id, deletedAt: null, version: dto.version },
+        data: { ...changes, version: { increment: 1 } },
+      });
+      if (result.count === 0) {
+        throw new ConflictException(
+          'Task was modified by another request; fetch the latest version and retry',
+        );
+      }
+
+      const updatedTask = await transaction.task.findFirst({
+        where: { id: task.id, deletedAt: null },
+        select: taskSelect,
+      });
+      if (!updatedTask) {
+        throw new NotFoundException('Task not found');
+      }
+
+      await transaction.auditLog.create({
+        data: {
+          actorId: userId,
+          action: 'TASK_UPDATED',
+          entityType: 'TASK',
+          entityId: task.id,
+          metadata: {
+            changedFields: Object.keys(changes),
+            previousVersion: currentTask.version,
+            version: updatedTask.version,
+          },
+        },
+      });
+
+      return updatedTask;
     });
-    if (!updatedTask) {
-      throw new NotFoundException('Task not found');
-    }
-    return updatedTask;
   }
 
   async remove(userId: string, taskId: string): Promise<{ deleted: true }> {
@@ -159,6 +259,10 @@ export class TasksService {
     }
     await this.requireProjectMembership(userId, task.projectId);
     return task;
+  }
+
+  async assertTaskMembership(userId: string, taskId: string): Promise<void> {
+    await this.requireTaskMembership(userId, taskId);
   }
 
   private async requireMembership(

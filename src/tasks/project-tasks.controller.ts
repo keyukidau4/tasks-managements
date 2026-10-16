@@ -5,12 +5,14 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AccessTokenGuard } from '../auth/access-token.guard';
 import type { AuthUser } from '../auth/auth-user.interface';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { ListTasksQueryDto } from './dto/list-tasks-query.dto';
 import { TasksRolesGuard } from './tasks-roles.guard';
 import { TasksService } from './tasks.service';
 
@@ -32,7 +34,8 @@ export class ProjectTasksController {
   findAll(
     @CurrentUser() user: AuthUser,
     @Param('projectId', new ParseUUIDPipe()) projectId: string,
+    @Query() query: ListTasksQueryDto,
   ) {
-    return this.tasksService.findAll(user.sub, projectId);
+    return this.tasksService.findAll(user.sub, projectId, query);
   }
 }

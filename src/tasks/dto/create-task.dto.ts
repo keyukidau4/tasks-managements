@@ -1,11 +1,14 @@
 import {
   IsDateString,
+  IsIn,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { TaskPriority } from '../task-priority.enum';
+import { TaskStatus } from '../task-status.enum';
 
 export class CreateTaskDto {
   @IsString()
@@ -25,4 +28,12 @@ export class CreateTaskDto {
   @IsOptional()
   @IsDateString()
   dueDate?: string;
+
+  @IsOptional()
+  @IsIn(Object.values(TaskStatus))
+  status?: TaskStatus;
+
+  @IsOptional()
+  @IsIn(Object.values(TaskPriority))
+  priority?: TaskPriority;
 }

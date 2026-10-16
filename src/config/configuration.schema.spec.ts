@@ -26,4 +26,15 @@ describe('configurationSchema JWT secret validation', () => {
     });
     expect(error).toBeUndefined();
   });
+
+  it('accepts optional MinIO credentials', () => {
+    const { error } = configurationSchema.validate({
+      ...productionConfig,
+      JWT_ACCESS_SECRET: 'a'.repeat(32),
+      MINIO_ACCESS_KEY: 'local-access-key',
+      MINIO_SECRET_KEY: 'local-secret-key',
+    });
+
+    expect(error).toBeUndefined();
+  });
 });

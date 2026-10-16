@@ -1,13 +1,22 @@
 import {
   IsDateString,
+  IsIn,
+  IsInt,
   IsString,
   IsUUID,
+  Min,
   MaxLength,
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import { TaskPriority } from '../task-priority.enum';
+import { TaskStatus } from '../task-status.enum';
 
 export class UpdateTaskDto {
+  @IsInt()
+  @Min(1)
+  version: number;
+
   @ValidateIf((_object, value) => value !== undefined)
   @IsString()
   @MinLength(1)
@@ -26,4 +35,12 @@ export class UpdateTaskDto {
   @ValidateIf((_object, value) => value !== undefined && value !== null)
   @IsDateString()
   dueDate?: string | null;
+
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsIn(Object.values(TaskStatus))
+  status?: TaskStatus;
+
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsIn(Object.values(TaskPriority))
+  priority?: TaskPriority;
 }
