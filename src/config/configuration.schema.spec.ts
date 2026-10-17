@@ -3,6 +3,7 @@ import { configurationSchema } from './configuration.schema';
 describe('configurationSchema JWT secret validation', () => {
   const productionConfig = {
     NODE_ENV: 'production',
+    REDIS_PASSWORD: 'test-redis-password',
     DATABASE_URL: 'postgresql://app:password@localhost:5432/tasks',
   };
 
@@ -36,5 +37,28 @@ describe('configurationSchema JWT secret validation', () => {
     });
 
     expect(error).toBeUndefined();
+  });
+});
+
+describe('configurationSchema Redis validation', () => {
+  it('provides local Redis connection defaults', () => {
+    const result = configurationSchema.validate({
+      NODE_ENV: 'development',
+    });
+    expect(result.error).toBeUndefined();
+    expect(result).toMatchObject({
+      value: {
+        REDIS_HOST: 'localhost',
+        REDIS_PORT: 6379,
+      },
+    });
+  });
+
+  it('requires a Redis password in production', () => {
+    const { error } = configurationSchema.validate({
+      NODE_ENV: 'production',
+    });
+
+    expect(error).toBeDefined();
   });
 });

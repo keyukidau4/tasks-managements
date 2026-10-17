@@ -42,6 +42,13 @@ export const configurationSchema = Joi.object({
   MINIO_BUCKET: Joi.string()
     .pattern(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/)
     .default('task-attachments'),
+  REDIS_HOST: Joi.string().hostname().default('localhost'),
+  REDIS_PORT: Joi.number().port().default(6379),
+  REDIS_PASSWORD: Joi.string().min(1).when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
   JWT_ACCESS_SECRET: Joi.string().min(32).when('NODE_ENV', {
     is: 'production',
     then: Joi.required(),

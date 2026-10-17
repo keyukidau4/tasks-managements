@@ -14,6 +14,8 @@ import { AuthModule } from './auth/auth.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 import { ProjectsModule } from './projects/projects.module';
 import { TasksModule } from './tasks/tasks.module';
+import { StatisticsModule } from './statistics/statistics.module';
+import { QueuesModule } from './queues/queues.module';
 
 @Module({
   imports: [
@@ -67,6 +69,8 @@ import { TasksModule } from './tasks/tasks.module';
     WorkspacesModule,
     ProjectsModule,
     TasksModule,
+    StatisticsModule,
+    QueuesModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

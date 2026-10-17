@@ -5,7 +5,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  NOTIFICATIONS_QUEUE,
+  TASK_ASSIGNED_JOB,
+} from '../queues/queue.constants';
+import { TaskAssignedNotification } from '../queues/notification.types';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { ListTasksQueryDto } from './dto/list-tasks-query.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -27,7 +34,11 @@ const taskSelect = {
 
 @Injectable()
 export class TasksService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @InjectQueue(NOTIFICATIONS_QUEUE)
+    private readonly notificationsQueue: Queue<TaskAssignedNotification>,
+  ) {}
 
   async create(userId: string, projectId: string, dto: CreateTaskDto) {
     const project = await this.requireProjectMembership(userId, projectId);
@@ -40,8 +51,8 @@ export class TasksService {
       await this.requireMembership(userId, project.workspaceId, dto.assigneeId);
     }
 
-    return this.prisma.$transaction(async (transaction) => {
-      const task = await transaction.task.create({
+    const result = await this.prisma.$transaction(async (transaction) => {
+      const createdTask = await transaction.task.create({
         data: {
           projectId,
           title,
@@ -52,7 +63,12 @@ export class TasksService {
           priority: dto.priority,
           createdBy: userId,
         },
-        select: taskSelect,
+        select: {
+          ...taskSelect,
+          assignee: { select: { name: true, email: true } },
+          project: { select: { name: true } },
+          creator: { select: { name: true } },
+        },
       });
 
       await transaction.auditLog.create({
@@ -60,18 +76,44 @@ export class TasksService {
           actorId: userId,
           action: 'TASK_CREATED',
           entityType: 'TASK',
-          entityId: task.id,
+          entityId: createdTask.id,
           metadata: {
             projectId,
-            version: task.version,
-            status: task.status,
-            priority: task.priority,
+            version: createdTask.version,
+            status: createdTask.status,
+            priority: createdTask.priority,
           },
         },
       });
 
-      return task;
+      const {
+        assignee,
+        project: assignedProject,
+        creator,
+        ...task
+      } = createdTask;
+      return {
+        task,
+        notification:
+          assignee && dto.assigneeId
+            ? {
+                taskId: task.id,
+                taskTitle: task.title,
+                projectName: assignedProject.name,
+                assigneeName: assignee.name,
+                assigneeEmail: assignee.email,
+                assignedByName: creator.name,
+              }
+            : null,
+      };
     });
+    if (result.notification) {
+      await this.enqueueTaskAssignedNotification(
+        result.notification,
+        result.task.version,
+      );
+    }
+    return result.task;
   }
 
   async findAll(userId: string, projectId: string, query: ListTasksQueryDto) {
@@ -180,10 +222,10 @@ export class TasksService {
       throw new BadRequestException('At least one task field must be provided');
     }
 
-    return this.prisma.$transaction(async (transaction) => {
+    const result = await this.prisma.$transaction(async (transaction) => {
       const currentTask = await transaction.task.findFirst({
         where: { id: task.id, deletedAt: null },
-        select: { version: true },
+        select: { version: true, assigneeId: true },
       });
       if (!currentTask) {
         throw new NotFoundException('Task not found');
@@ -201,7 +243,12 @@ export class TasksService {
 
       const updatedTask = await transaction.task.findFirst({
         where: { id: task.id, deletedAt: null },
-        select: taskSelect,
+        select: {
+          ...taskSelect,
+          assignee: { select: { name: true, email: true } },
+          project: { select: { name: true } },
+          creator: { select: { name: true } },
+        },
       });
       if (!updatedTask) {
         throw new NotFoundException('Task not found');
@@ -221,8 +268,36 @@ export class TasksService {
         },
       });
 
-      return updatedTask;
+      const {
+        assignee,
+        project: assignedProject,
+        creator,
+        ...taskResult
+      } = updatedTask;
+      return {
+        task: taskResult,
+        notification:
+          dto.assigneeId &&
+          currentTask.assigneeId !== updatedTask.assigneeId &&
+          assignee
+            ? {
+                taskId: taskResult.id,
+                taskTitle: taskResult.title,
+                projectName: assignedProject.name,
+                assigneeName: assignee.name,
+                assigneeEmail: assignee.email,
+                assignedByName: creator.name,
+              }
+            : null,
+      };
     });
+    if (result.notification) {
+      await this.enqueueTaskAssignedNotification(
+        result.notification,
+        result.task.version,
+      );
+    }
+    return result.task;
   }
 
   async remove(userId: string, taskId: string): Promise<{ deleted: true }> {
@@ -245,8 +320,18 @@ export class TasksService {
     if (!project) {
       throw new NotFoundException('Project not found');
     }
+
     await this.requireMembership(userId, project.workspaceId);
     return project;
+  }
+
+  private async enqueueTaskAssignedNotification(
+    notification: TaskAssignedNotification,
+    version: number,
+  ): Promise<void> {
+    await this.notificationsQueue.add(TASK_ASSIGNED_JOB, notification, {
+      jobId: `task-assigned-${notification.taskId}-${version}`,
+    });
   }
 
   private async requireTaskMembership(userId: string, taskId: string) {

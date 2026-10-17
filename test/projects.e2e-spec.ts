@@ -5,6 +5,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { notificationQueueProvider } from './notification-queue.mock';
 
 jest.setTimeout(30_000);
 
@@ -66,7 +67,10 @@ describe('Projects (e2e)', () => {
     projectIds = [];
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(notificationQueueProvider.provide)
+      .useValue(notificationQueueProvider.useValue)
+      .compile();
 
     app = moduleFixture.createNestApplication();
     app.useGlobalPipes(

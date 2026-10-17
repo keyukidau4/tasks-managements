@@ -4,8 +4,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { getQueueToken } from '@nestjs/bullmq';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  NOTIFICATIONS_QUEUE,
+  TASK_ASSIGNED_JOB,
+} from '../queues/queue.constants';
 import { ListTasksQueryDto } from './dto/list-tasks-query.dto';
 import { TasksService } from './tasks.service';
 
@@ -22,6 +27,7 @@ describe('TasksService', () => {
     >(),
   };
   const auditLog = { create: jest.fn() };
+  const notificationsQueue = { add: jest.fn().mockResolvedValue(undefined) };
   const transaction = { task: taskModel, auditLog };
   const prisma = {
     $transaction: jest.fn(
@@ -37,7 +43,14 @@ describe('TasksService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     const module: TestingModule = await Test.createTestingModule({
-      providers: [TasksService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        TasksService,
+        { provide: PrismaService, useValue: prisma },
+        {
+          provide: getQueueToken(NOTIFICATIONS_QUEUE),
+          useValue: notificationsQueue,
+        },
+      ],
     }).compile();
     service = module.get(TasksService);
   });
@@ -194,17 +207,63 @@ describe('TasksService', () => {
         },
       },
     });
+    expect(notificationsQueue.add).not.toHaveBeenCalled();
+  });
+
+  it('queues an assignment email when creating an assigned task', async () => {
+    prisma.project.findFirst.mockResolvedValue({
+      id: 'project-id',
+      workspaceId: 'workspace-id',
+    });
+    prisma.workspaceMember.findUnique.mockResolvedValue({ id: 'member-id' });
+    prisma.task.create.mockResolvedValue({
+      id: 'task-id',
+      projectId: 'project-id',
+      title: 'Task',
+      status: 'TODO',
+      priority: 'MEDIUM',
+      version: 1,
+      assignee: { name: 'Assignee', email: 'assignee@example.invalid' },
+      project: { name: 'Project' },
+      creator: { name: 'Creator' },
+    });
+
+    await service.create('member-id', 'project-id', {
+      title: 'Task',
+      assigneeId: 'assignee-id',
+    });
+
+    expect(notificationsQueue.add).toHaveBeenCalledWith(
+      TASK_ASSIGNED_JOB,
+      {
+        taskId: 'task-id',
+        taskTitle: 'Task',
+        projectName: 'Project',
+        assigneeName: 'Assignee',
+        assigneeEmail: 'assignee@example.invalid',
+        assignedByName: 'Creator',
+      },
+      { jobId: 'task-assigned-task-id-1' },
+    );
   });
 
   it('atomically updates the matching version and increments it', async () => {
     prisma.task.findFirst
-      .mockResolvedValueOnce({ id: 'task-id', projectId: 'project-id' })
-      .mockResolvedValueOnce({ version: 1 })
+      .mockResolvedValueOnce({
+        id: 'task-id',
+        projectId: 'project-id',
+        assigneeId: null,
+      })
+      .mockResolvedValueOnce({ version: 1, assigneeId: null })
       .mockResolvedValueOnce({
         id: 'task-id',
         projectId: 'project-id',
         title: 'Updated task',
         version: 2,
+        assigneeId: null,
+        assignee: null,
+        project: { name: 'Project' },
+        creator: { name: 'Creator' },
       });
     prisma.project.findFirst.mockResolvedValue({
       id: 'project-id',
@@ -240,6 +299,87 @@ describe('TasksService', () => {
         },
       },
     });
+    expect(notificationsQueue.add).not.toHaveBeenCalled();
+  });
+
+  it('queues an assignment email only when the assignee changes', async () => {
+    prisma.task.findFirst
+      .mockResolvedValueOnce({
+        id: 'task-id',
+        projectId: 'project-id',
+        assigneeId: 'previous-assignee-id',
+      })
+      .mockResolvedValueOnce({
+        version: 1,
+        assigneeId: 'previous-assignee-id',
+      })
+      .mockResolvedValueOnce({
+        id: 'task-id',
+        projectId: 'project-id',
+        title: 'Assigned task',
+        version: 2,
+        assigneeId: 'new-assignee-id',
+        assignee: { name: 'New assignee', email: 'new@example.invalid' },
+        project: { name: 'Project' },
+        creator: { name: 'Creator' },
+      });
+    prisma.project.findFirst.mockResolvedValue({
+      id: 'project-id',
+      workspaceId: 'workspace-id',
+    });
+    prisma.workspaceMember.findUnique.mockResolvedValue({ id: 'member-id' });
+    prisma.task.updateMany.mockResolvedValue({ count: 1 });
+
+    await service.update('member-id', 'task-id', {
+      version: 1,
+      assigneeId: 'new-assignee-id',
+    });
+
+    expect(notificationsQueue.add).toHaveBeenCalledWith(
+      TASK_ASSIGNED_JOB,
+      {
+        taskId: 'task-id',
+        taskTitle: 'Assigned task',
+        projectName: 'Project',
+        assigneeName: 'New assignee',
+        assigneeEmail: 'new@example.invalid',
+        assignedByName: 'Creator',
+      },
+      { jobId: 'task-assigned-task-id-2' },
+    );
+  });
+
+  it('does not queue another email when the assignee stays the same', async () => {
+    prisma.task.findFirst
+      .mockResolvedValueOnce({
+        id: 'task-id',
+        projectId: 'project-id',
+        assigneeId: 'assignee-id',
+      })
+      .mockResolvedValueOnce({ version: 1, assigneeId: 'assignee-id' })
+      .mockResolvedValueOnce({
+        id: 'task-id',
+        projectId: 'project-id',
+        title: 'Assigned task',
+        version: 2,
+        assigneeId: 'assignee-id',
+        assignee: { name: 'Assignee', email: 'assignee@example.invalid' },
+        project: { name: 'Project' },
+        creator: { name: 'Creator' },
+      });
+    prisma.project.findFirst.mockResolvedValue({
+      id: 'project-id',
+      workspaceId: 'workspace-id',
+    });
+    prisma.workspaceMember.findUnique.mockResolvedValue({ id: 'member-id' });
+    prisma.task.updateMany.mockResolvedValue({ count: 1 });
+
+    await service.update('member-id', 'task-id', {
+      version: 1,
+      assigneeId: 'assignee-id',
+    });
+
+    expect(notificationsQueue.add).not.toHaveBeenCalled();
   });
 
   it('returns conflict when the supplied version is stale', async () => {

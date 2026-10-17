@@ -6,6 +6,7 @@ import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { ObjectStorageService } from '../src/tasks/object-storage.service';
+import { notificationQueueProvider } from './notification-queue.mock';
 
 jest.setTimeout(30_000);
 
@@ -97,6 +98,8 @@ describe('Tasks (e2e)', () => {
     })
       .overrideProvider(ObjectStorageService)
       .useValue(storage)
+      .overrideProvider(notificationQueueProvider.provide)
+      .useValue(notificationQueueProvider.useValue)
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -528,6 +531,267 @@ describe('Tasks (e2e)', () => {
       })
       .expect(404);
     expect(storage.upload).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns project progress counts with zero statuses and membership checks', async () => {
+    const owner = await createAuthenticatedUser();
+    const outsider = await createAuthenticatedUser();
+    const workspace = await createWorkspace(owner.accessToken);
+    const project = await createProject(owner.accessToken, workspace.id);
+
+    async function addTask(title: string, status: string) {
+      const response = await request(app.getHttpServer())
+        .post(`/projects/${project.id}/tasks`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({ title, status })
+        .expect(201);
+      const task = envelopeData<TaskResponse>(response.body);
+      taskIds.push(task.id);
+      return task;
+    }
+
+    await addTask('Todo task', 'TODO');
+    await addTask('In progress task', 'IN_PROGRESS');
+    const deletedTask = await addTask('Deleted task', 'DONE');
+    await request(app.getHttpServer())
+      .delete(`/tasks/${deletedTask.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+
+    const response = await request(app.getHttpServer())
+      .get(`/projects/${project.id}/statistics/progress`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(
+      envelopeData<{
+        projectId: string;
+        total: number;
+        byStatus: Array<{ status: string; count: number }>;
+      }>(response.body),
+    ).toEqual({
+      projectId: project.id,
+      total: 2,
+      byStatus: [
+        { status: 'TODO', count: 1 },
+        { status: 'IN_PROGRESS', count: 1 },
+        { status: 'IN_REVIEW', count: 0 },
+        { status: 'DONE', count: 0 },
+      ],
+    });
+
+    await request(app.getHttpServer())
+      .get(`/projects/${project.id}/statistics/progress`)
+      .set('Authorization', `Bearer ${outsider.accessToken}`)
+      .expect(404);
+  });
+
+  it('calculates workspace member workload for assigned active tasks only', async () => {
+    const owner = await createAuthenticatedUser();
+    const member = await createAuthenticatedUser();
+    const outsider = await createAuthenticatedUser();
+    const workspace = await createWorkspace(owner.accessToken);
+    const firstProject = await createProject(owner.accessToken, workspace.id);
+    const secondProject = await createProject(owner.accessToken, workspace.id);
+    await app.get(PrismaService).workspaceMember.create({
+      data: {
+        workspaceId: workspace.id,
+        userId: member.user.id,
+        role: 'MEMBER',
+      },
+    });
+
+    async function addTask(
+      projectId: string,
+      title: string,
+      status: string,
+      assigneeId?: string,
+    ) {
+      const response = await request(app.getHttpServer())
+        .post(`/projects/${projectId}/tasks`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({ title, status, assigneeId })
+        .expect(201);
+      const task = envelopeData<TaskResponse>(response.body);
+      taskIds.push(task.id);
+      return task;
+    }
+
+    await addTask(firstProject.id, 'Assigned todo', 'TODO', member.user.id);
+    await addTask(
+      firstProject.id,
+      'Assigned in progress',
+      'IN_PROGRESS',
+      member.user.id,
+    );
+    const deletedTask = await addTask(
+      firstProject.id,
+      'Assigned deleted',
+      'DONE',
+      member.user.id,
+    );
+    await addTask(secondProject.id, 'Unassigned task', 'DONE');
+    await request(app.getHttpServer())
+      .delete(`/tasks/${deletedTask.id}`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+
+    const response = await request(app.getHttpServer())
+      .get(`/workspaces/${workspace.id}/statistics/workload`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    const result = envelopeData<{
+      workspaceId: string;
+      totalAssignedTasks: number;
+      members: Array<{
+        user: { id: string };
+        total: number;
+        byStatus: Array<{ status: string; count: number }>;
+      }>;
+    }>(response.body);
+    expect(result.workspaceId).toBe(workspace.id);
+    expect(result.totalAssignedTasks).toBe(2);
+    expect(result.members).toHaveLength(2);
+    expect(
+      result.members.find(({ user }) => user.id === owner.user.id),
+    ).toMatchObject({
+      total: 0,
+    });
+    expect(
+      result.members.find(({ user }) => user.id === member.user.id),
+    ).toMatchObject({
+      total: 2,
+      byStatus: [
+        { status: 'TODO', count: 1 },
+        { status: 'IN_PROGRESS', count: 1 },
+        { status: 'IN_REVIEW', count: 0 },
+        { status: 'DONE', count: 0 },
+      ],
+    });
+
+    await request(app.getHttpServer())
+      .get(`/workspaces/${workspace.id}/statistics/workload`)
+      .set('Authorization', `Bearer ${outsider.accessToken}`)
+      .expect(404);
+  });
+
+  it('lists overdue tasks only from active projects in the authorized workspace', async () => {
+    const owner = await createAuthenticatedUser();
+    const outsider = await createAuthenticatedUser();
+    const workspace = await createWorkspace(owner.accessToken);
+    const project = await createProject(owner.accessToken, workspace.id);
+    const deletedProject = await createProject(owner.accessToken, workspace.id);
+    const otherWorkspace = await createWorkspace(outsider.accessToken);
+    const otherProject = await createProject(
+      outsider.accessToken,
+      otherWorkspace.id,
+    );
+
+    async function addTask(
+      projectId: string,
+      token: string,
+      title: string,
+      options: { dueDate?: string; status?: string } = {},
+    ) {
+      const response = await request(app.getHttpServer())
+        .post(`/projects/${projectId}/tasks`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          title,
+          ...options,
+        })
+        .expect(201);
+      const task = envelopeData<TaskResponse>(response.body);
+      taskIds.push(task.id);
+      return task;
+    }
+
+    const overdue = await addTask(
+      project.id,
+      owner.accessToken,
+      'Overdue in progress',
+      {
+        dueDate: '2000-01-01T00:00:00.000Z',
+        status: 'IN_PROGRESS',
+      },
+    );
+    const softDeleted = await addTask(
+      project.id,
+      owner.accessToken,
+      'Soft-deleted overdue',
+      { dueDate: '2000-01-01T00:00:00.000Z' },
+    );
+    await app.get(PrismaService).task.updateMany({
+      where: { id: softDeleted.id },
+      data: { deletedAt: new Date() },
+    });
+    await addTask(project.id, owner.accessToken, 'Overdue but done', {
+      dueDate: '2000-01-02T00:00:00.000Z',
+      status: 'DONE',
+    });
+    await addTask(project.id, owner.accessToken, 'No due date', {
+      status: 'TODO',
+    });
+    await addTask(project.id, owner.accessToken, 'Due in future', {
+      dueDate: '2999-01-01T00:00:00.000Z',
+      status: 'TODO',
+    });
+    await addTask(
+      otherProject.id,
+      outsider.accessToken,
+      'Other workspace overdue',
+      {
+        dueDate: '2000-01-03T00:00:00.000Z',
+        status: 'TODO',
+      },
+    );
+    await addTask(
+      deletedProject.id,
+      owner.accessToken,
+      'Deleted project overdue',
+      {
+        dueDate: '2000-01-03T00:00:00.000Z',
+        status: 'TODO',
+      },
+    );
+    await app.get(PrismaService).project.update({
+      where: { id: deletedProject.id },
+      data: { deletedAt: new Date() },
+    });
+
+    const response = await request(app.getHttpServer())
+      .get(`/workspaces/${workspace.id}/statistics/overdue`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(
+      envelopeData<{
+        workspaceId: string;
+        total: number;
+        tasks: Array<{
+          id: string;
+          title: string;
+          status: string;
+          assignee: null;
+          project: { id: string; name: string };
+        }>;
+      }>(response.body),
+    ).toMatchObject({
+      workspaceId: workspace.id,
+      total: 1,
+      tasks: [
+        {
+          id: overdue.id,
+          title: 'Overdue in progress',
+          status: 'IN_PROGRESS',
+          assignee: null,
+          project: { id: project.id, name: 'Task Test Project' },
+        },
+      ],
+    });
+
+    await request(app.getHttpServer())
+      .get(`/workspaces/${workspace.id}/statistics/overdue`)
+      .set('Authorization', `Bearer ${outsider.accessToken}`)
+      .expect(404);
   });
 
   it('validates IDs, titles, dates, and empty updates', async () => {
