@@ -77,7 +77,7 @@ describe('configurationSchema SMTP validation', () => {
       SMTP_HOST: 'localhost',
       SMTP_PORT: 1025,
       SMTP_SECURE: false,
-      SMTP_FROM: 'noreply@localhost.test',
+      SMTP_FROM: 'noreply@example.com',
       APP_URL: 'http://localhost:5173',
     });
   });

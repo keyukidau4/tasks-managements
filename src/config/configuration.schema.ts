@@ -65,7 +65,7 @@ export const configurationSchema = Joi.object({
     .when('NODE_ENV', {
       is: 'production',
       then: Joi.required(),
-      otherwise: Joi.string().email().default('noreply@localhost.test'),
+      otherwise: Joi.string().email().default('noreply@example.com'),
     }),
   APP_URL: Joi.string()
     .uri({ scheme: ['http', 'https'] })
