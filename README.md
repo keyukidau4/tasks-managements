@@ -140,7 +140,7 @@ npm run prisma:migrate -- --name task_schema
 
 ## Migration と test
 
-migration は API 起動時に自動適用されません。新規 clone 後、または schema を変更した後に PostgreSQL を起動してから、次を実行してください。
+Docker Compose で起動する場合は、API image build 時に依存関係と Prisma Client を準備し、API container の起動時に既存 migration を自動適用します。API を host 上で直接起動する場合は migration は自動適用されません。新規 clone 後に PostgreSQL を起動し、`api/` で次を実行してください。
 
 ```bash
 npm ci

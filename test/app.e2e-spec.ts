@@ -130,6 +130,91 @@ describe('AppController (e2e)', () => {
     ]);
   });
 
+  it('requires authentication on every documented bearer-protected operation', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/docs-json')
+      .expect(200);
+    const document = response.body as {
+      paths: Record<
+        string,
+        Record<
+          string,
+          | {
+              security?: { bearer?: string[] }[];
+            }
+          | undefined
+        >
+      >;
+    };
+    const methods = ['get', 'post', 'patch', 'delete'] as const;
+    const protectedOperations: string[] = [];
+
+    for (const [route, pathItem] of Object.entries(document.paths)) {
+      for (const method of methods) {
+        const operation = pathItem[method];
+        if (!operation?.security?.some(({ bearer }) => bearer !== undefined)) {
+          continue;
+        }
+
+        const operationName = `${method.toUpperCase()} ${route}`;
+        protectedOperations.push(operationName);
+        const path = route.replace(
+          /\{[^}]+\}/g,
+          '123e4567-e89b-42d3-a456-426614174000',
+        );
+        let result: { status: number; body: unknown };
+        switch (method) {
+          case 'get':
+            result = await request(app.getHttpServer()).get(path);
+            break;
+          case 'post':
+            result = await request(app.getHttpServer()).post(path);
+            break;
+          case 'patch':
+            result = await request(app.getHttpServer()).patch(path);
+            break;
+          case 'delete':
+            result = await request(app.getHttpServer()).delete(path);
+            break;
+        }
+
+        expect(result.status).toBe(401);
+        const errorEnvelope = result.body as {
+          error?: { code?: string };
+        };
+        expect(errorEnvelope.error?.code).toBe('UNAUTHORIZED');
+      }
+    }
+
+    expect(protectedOperations.sort()).toEqual(
+      [
+        'GET /auth/me',
+        'POST /workspaces',
+        'GET /workspaces/{id}',
+        'PATCH /workspaces/{id}',
+        'POST /workspaces/{id}/members',
+        'DELETE /workspaces/{id}/members/{userId}',
+        'POST /workspaces/{workspaceId}/projects',
+        'GET /workspaces/{workspaceId}/projects',
+        'GET /projects/{id}',
+        'PATCH /projects/{id}',
+        'DELETE /projects/{id}',
+        'GET /projects/{id}/statistics/progress',
+        'POST /projects/{projectId}/tasks',
+        'GET /projects/{projectId}/tasks',
+        'GET /tasks/{id}',
+        'PATCH /tasks/{id}',
+        'DELETE /tasks/{id}',
+        'GET /tasks/{id}/comments',
+        'POST /tasks/{id}/comments',
+        'GET /tasks/{id}/attachments',
+        'POST /tasks/{id}/attachments',
+        'GET /workspaces/{id}/statistics/workload',
+        'GET /workspaces/{id}/statistics/overdue',
+      ].sort(),
+    );
+  });
+
   it('returns a structured error for unknown routes', () => {
     return request(app.getHttpServer())
       .get('/not-found')
