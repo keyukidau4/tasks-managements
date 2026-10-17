@@ -237,6 +237,54 @@ describe('Projects (e2e)', () => {
       .expect(404);
   });
 
+  it('returns standardized authorization and validation error envelopes', async () => {
+    const owner = await createAuthenticatedUser();
+    const member = await createAuthenticatedUser();
+    const workspace = await createWorkspace(owner.accessToken);
+    await app.get(PrismaService).workspaceMember.create({
+      data: {
+        workspaceId: workspace.id,
+        userId: member.user.id,
+        role: 'MEMBER',
+      },
+    });
+    const created = await request(app.getHttpServer())
+      .post(`/workspaces/${workspace.id}/projects`)
+      .auth(owner.accessToken, { type: 'bearer' })
+      .send({ name: 'Envelope checks' })
+      .expect(201);
+    const project = envelopeData<ProjectResponse>(created.body);
+    projectIds.push(project.id);
+
+    const forbidden = await request(app.getHttpServer())
+      .patch(`/projects/${project.id}`)
+      .auth(member.accessToken, { type: 'bearer' })
+      .send({ name: 'Not allowed' })
+      .expect(403);
+    const forbiddenEnvelope = forbidden.body as {
+      success: boolean;
+      error: { code: string; message: string; details: unknown[] };
+    };
+    expect(forbiddenEnvelope.success).toBe(false);
+    expect(forbiddenEnvelope.error.code).toBe('FORBIDDEN');
+    expect(forbiddenEnvelope.error.message).toBeTruthy();
+    expect(Array.isArray(forbiddenEnvelope.error.details)).toBe(true);
+
+    const invalid = await request(app.getHttpServer())
+      .post(`/workspaces/${workspace.id}/projects`)
+      .auth(owner.accessToken, { type: 'bearer' })
+      .send({ name: 'Invalid date', dueDate: 'not-a-date' })
+      .expect(400);
+    const validationEnvelope = invalid.body as {
+      success: boolean;
+      error: { code: string; message: string; details: unknown[] };
+    };
+    expect(validationEnvelope.success).toBe(false);
+    expect(validationEnvelope.error.code).toBe('VALIDATION_ERROR');
+    expect(validationEnvelope.error.message).toBeTruthy();
+    expect(Array.isArray(validationEnvelope.error.details)).toBe(true);
+  });
+
   it('validates project IDs, names, dates, and empty updates', async () => {
     const owner = await createAuthenticatedUser();
     const workspace = await createWorkspace(owner.accessToken);

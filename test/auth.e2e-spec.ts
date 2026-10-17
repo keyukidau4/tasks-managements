@@ -78,6 +78,12 @@ describe('Authentication (e2e)', () => {
       .send({ email, name: 'Auth Test', password: 'correct horse 123' })
       .expect(201);
 
+    const successEnvelope = response.body as {
+      success: boolean;
+      data: unknown;
+    };
+    expect(successEnvelope.success).toBe(true);
+    expect(successEnvelope.data).toBeDefined();
     const user = envelopeData<PublicUserResponse>(response.body);
     expect(user).toMatchObject({
       email,
@@ -96,6 +102,10 @@ describe('Authentication (e2e)', () => {
       .post('/auth/register')
       .send({ email, name: 'Too Short', password: 'short' })
       .expect(400);
+    const invalid = await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ email, name: 'Too Short', password: 'short' });
+    expect(errorCode(invalid.body)).toBe('VALIDATION_ERROR');
 
     await request(app.getHttpServer())
       .post('/auth/register')
@@ -124,6 +134,14 @@ describe('Authentication (e2e)', () => {
       .get('/auth/me')
       .expect(401);
     expect(errorCode(unauthenticatedMe.body)).toBe('UNAUTHORIZED');
+    const unauthorizedEnvelope = unauthenticatedMe.body as {
+      success: boolean;
+      error: { code: string; message: string; details: unknown[] };
+    };
+    expect(unauthorizedEnvelope.success).toBe(false);
+    expect(unauthorizedEnvelope.error.code).toBe('UNAUTHORIZED');
+    expect(typeof unauthorizedEnvelope.error.message).toBe('string');
+    expect(Array.isArray(unauthorizedEnvelope.error.details)).toBe(true);
 
     const login = await request(app.getHttpServer())
       .post('/auth/login')

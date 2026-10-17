@@ -17,7 +17,7 @@ cd tasks-managements/api
 npm ci
 ```
 
-`.env` は API 起動時に必須ではありません。PostgreSQL 接続 URL はローカル開発用の既定値が設定されています。PostgreSQL を含む依存サービスを起動してから API を実行してください。ポートや CORS 許可 origin、DB 接続 URL を変更する場合は、サンプルをコピーして編集します。
+まず `api/` で依存パッケージをインストールし、環境設定ファイルを作成します。
 
 macOS / Linux:
 
@@ -31,15 +31,30 @@ Windows PowerShell:
 Copy-Item .env.example .env
 ```
 
-開発サーバーを起動します。
+`.env.example` の PostgreSQL URL と Compose の PostgreSQL 開発用設定は一致しています。Compose で全サービスを起動する場合、Compose が要求する MinIO root credentials (`MINIO_ACCESS_KEY` と `MINIO_SECRET_KEY`) を `.env` にローカル専用の値として設定してください。これらの値を `.env.example`、README、その他の version 管理対象ファイルに記入しないでください。
+
+PostgreSQL、Redis、Mailpit、MinIO を起動します。
+
+```bash
+docker compose up -d
+```
+
+初回または schema 更新後は Prisma Client を生成し、migration を適用します。
+
+```bash
+npm run prisma:generate
+npm run prisma:deploy
+```
+
+その後、開発サーバーを起動します。
 
 ```bash
 npm run start:dev
 ```
 
-既定では `http://localhost:3000` で起動します。`GET /` は `Hello World!` を共通 response envelope で返し、`GET /health` はヘルス状態を返します。開発サーバーを停止するには `Ctrl+C` を押してください。
+既定では `http://localhost:3000` で起動します。`GET /` は `Hello World!` を共通 response envelope で返し、`GET /health` はヘルス状態を返します。Swagger UI は `/docs`、OpenAPI JSON は `/docs-json` で確認できます。開発サーバーを停止するには `Ctrl+C` を押してください。
 
-`.env` を作成しない場合も既定値で起動できます。ポートは `PORT`、ブラウザーからの接続を許可する origin は `CORS_ORIGINS`（カンマ区切り）で設定できます。許可 origin は完全な `http://` または `https://` origin で指定してください。設定対象の環境変数に不正な値がある場合、API は起動時にエラーにします。
+`.env` を作成しない場合も API の開発用既定値で起動できますが、Compose は `.env` に MinIO root credentials がないと起動しません。ポートは `PORT`、ブラウザーからの接続を許可する origin は `CORS_ORIGINS`（カンマ区切り）で設定できます。許可 origin は完全な `http://` または `https://` origin で指定してください。設定値が不正な場合、API は起動時にエラーにします。
 
 BullMQ は `REDIS_HOST`（既定値 `localhost`）、`REDIS_PORT`（既定値 `6379`）、任意の `REDIS_PASSWORD` で Redis に接続します。ローカル Compose の Redis は localhost のみに bind し、password なしで動作します。password を使う場合は `.env` にだけ設定し、本番では secret store から `REDIS_PASSWORD` を必ず渡してください（production では未設定だと起動時 validation に失敗します）。`notifications` queue は同時に 5 job を処理し、失敗時は指数 backoff で合計最大 3 回試行します。最終失敗 job は Redis に最大 1,000 件保持され、各失敗 attempt と最終失敗は log に記録します。
 
@@ -49,13 +64,33 @@ Email は Nodemailer から SMTP 送信します。ローカルの既定接続�
 
 認証 API は `POST /auth/register`、`POST /auth/login`、`POST /auth/refresh`、`POST /auth/logout`、`GET /auth/me` を提供します。ログイン応答の refresh token は次回更新またはログアウト時に JSON body で送信します。アクセス token は 15 分の HS256 JWT、refresh token は 7 日のランダム token で、DB には SHA-256 hash のみ保存します。register / login / refresh / logout は各 route あたり 1 分 5 回に制限します。開発時の JWT secret はプロセスごとにランダム生成され、再起動すると既存 access token は無効になります。本番では `JWT_ACCESS_SECRET`（32 文字以上）を secret store から渡してください。値が未設定または短い場合、production 起動時の検証に失敗します。秘密値を `.env.example` やその他の version 管理対象ファイルに書かないでください。
 
+## 環境変数
+
+設定値は API 起動時に検証されます。Compose は `api/.env` を読み込み、PostgreSQL の `POSTGRES_*` と MinIO credentials を使います。秘密情報はローカルの ignore 対象 `api/.env` または deployment secret store にだけ置いてください。
+
+| Variable                                                         | 用途                                          | 既定値 / 必須条件                                                                                                    |
+| ---------------------------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                                                       | 実行環境                                      | `development`                                                                                                        |
+| `PORT`                                                           | API listen port                               | `3000`                                                                                                               |
+| `DATABASE_URL`                                                   | Prisma PostgreSQL 接続 URL                    | local PostgreSQL の `task_management` database                                                                       |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB`            | Compose PostgreSQL 初期化                     | `task_app` / `task_app_local` / `task_management`。local development only                                            |
+| `CORS_ORIGINS`                                                   | 許可する完全な HTTP(S) origin（カンマ区切り） | `http://localhost:5173`                                                                                              |
+| `LOG_LEVEL`                                                      | Pino log level                                | `info`（`.env.example` は `debug`）                                                                                  |
+| `JWT_ACCESS_SECRET`                                              | access JWT 署名 secret                        | development では process ごとに生成。本番では 32 文字以上を secret store から必須設定                                |
+| `REDIS_HOST` / `REDIS_PORT`                                      | BullMQ 接続先                                 | `localhost` / `6379`                                                                                                 |
+| `REDIS_PASSWORD`                                                 | Redis password                                | 任意。本番では必須                                                                                                   |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` / `SMTP_FROM`          | メール送信                                    | local Mailpit: `localhost` / `1025` / `false` / `noreply@localhost.test`。本番では `SMTP_HOST` と `SMTP_FROM` が必須 |
+| `SMTP_USER` / `SMTP_PASS`                                        | SMTP 認証                                     | 任意だが両方設定する場合はペアで指定                                                                                 |
+| `APP_URL`                                                        | 通知メール内アプリ link                       | `http://localhost:5173`                                                                                              |
+| `MINIO_ENDPOINT` / `MINIO_BUCKET`                                | 添付ファイル storage                          | `http://localhost:9000` / `task-attachments`                                                                         |
+| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY`                          | MinIO credentials                             | API の添付 upload 時に必要。Compose 起動時は MinIO root credentials として両方必須                                   |
+| `SEED_USER_EMAIL` / `SEED_USER_NAME` / `SEED_USER_PASSWORD_HASH` | 任意の開発用 seed user                        | seed 実行時に設定。password は平文ではなく password hash                                                             |
+
+Compose の `POSTGRES_PASSWORD` を変更するときは、それと一致する `DATABASE_URL` も更新してください。`.env.example` の database credentials は local development 専用で、本番環境では利用せず、実際の値を version 管理対象ファイルに記録しないでください。
+
 ## ローカル依存サービス
 
-PostgreSQL 16、Redis 7、Mailpit、MinIO を起動する場合は、`api/` で次を実行します。MinIO の `MINIO_ACCESS_KEY` と `MINIO_SECRET_KEY` は `.env` にローカルで設定し、Compose が MinIO root credentials として使用します。これらの値を version 管理対象ファイルに書かないでください。
-
-```bash
-docker compose up -d
-```
+PostgreSQL 16、Redis 7、Mailpit、MinIO の接続先は次のとおりです。
 
 | Service       | URL / Port                                     | 用途                    |
 | ------------- | ---------------------------------------------- | ----------------------- |
@@ -66,7 +101,7 @@ docker compose up -d
 | MinIO API     | `localhost:9000`                               | S3-compatible storage   |
 | MinIO Console | [http://localhost:9001](http://localhost:9001) | 開発用ファイル管理      |
 
-Compose は `.env` の値を使用します。MinIO credentials が未設定の場合は起動に失敗します。サービスを停止するには `docker compose down` を実行します。データ volume も削除する場合は `docker compose down -v` を実行してください。
+Compose は `.env` の値を使用します。MinIO credentials が未設定の場合は起動に失敗します。サービス状態は `docker compose ps` で確認できます。サービスを停止するには `docker compose down` を実行します。`docker compose down -v` は DB、Redis、MinIO のデータ volume を削除するため、保持データが不要な場合に限り実行してください。
 
 Redis / BullMQ、task assignment notification worker、Nodemailer SMTP 送信と Mailpit ローカル受信を実装しています。Prisma には User / Workspace と Task 管理用テーブルの schema / migration を含みます。
 
@@ -74,7 +109,7 @@ API は Prisma Client を使って PostgreSQL に接続します。`User` / `Ref
 
 DB constraint は workspace member の workspace/user の組み合わせ、user email、refresh token hash、attachment file key を unique にします。Workspace member role、task status / priority、task version、attachment size は許可値・正数を CHECK 制約で検証します。Project / Task の soft delete 済みデータを含めて一意性を保つため、名前の unique 制約は付けていません。User や Project の履歴参照は物理削除を制限し、task assignee が物理削除された場合は assignee を NULL にします。Task の物理削除時のみ comment / attachment は cascade delete されます。
 
-PostgreSQL を起動してから、`npm run prisma:deploy` で既存 migration を適用できます。開発中に schema を変更して新しい migration を作る場合は次を使います。
+PostgreSQL を起動してから、`npm run prisma:generate` で Prisma Client を生成し、`npm run prisma:deploy` で既存 migration を適用します。開発中に schema を変更して新しい migration を作る場合は次を使います。
 
 ```bash
 npm run prisma:generate
@@ -89,30 +124,58 @@ npm run prisma:migrate -- --name task_schema
 
 すべて `api/` ディレクトリで実行してください。
 
-| コマンド                                  | 説明                                                |
-| ----------------------------------------- | --------------------------------------------------- |
-| `npm run start:dev`                       | watch モードで API を起動                           |
-| `npm run start`                           | watch モードなしで API を起動                       |
-| `npm run build`                           | アプリケーションを `dist/` にコンパイル             |
-| `npm run start:prod`                      | コンパイル済みアプリケーションを実行                |
-| `npm test`                                | unit test を実行                                    |
-| `npm run test:e2e`                        | end-to-end test を実行                              |
-| `npm run test:cov`                        | coverage を計測しながら unit test を実行            |
-| `npm run prisma:generate`                 | Prisma Client を生成                                |
-| `npm run prisma:migrate -- --name <name>` | 開発用 migration を作成・適用                       |
-| `npm run prisma:deploy`                   | 既存 migration を適用                               |
-| `npm run prisma:seed`                     | 環境変数から開発用ユーザーを初期化（任意）          |
-| `npm run prisma:studio`                   | Prisma Studio を起動                                |
-| `npm run format`                          | Prettier でソースとテストファイルを整形             |
-| `npm run lint`                            | ESLint を実行（設定済みコマンドは修正も適用します） |
+| コマンド                                  | 説明                                       |
+| ----------------------------------------- | ------------------------------------------ |
+| `npm run start:dev`                       | watch モードで API を起動                  |
+| `npm run start`                           | watch モードなしで API を起動              |
+| `npm run build`                           | アプリケーションを `dist/` にコンパイル    |
+| `npm run start:prod`                      | コンパイル済みアプリケーションを実行       |
+| `npm test`                                | unit test を実行                           |
+| `npm run test:e2e`                        | end-to-end test を実行                     |
+| `npm run test:cov`                        | coverage を計測しながら unit test を実行   |
+| `npm run prisma:generate`                 | Prisma Client を生成                       |
+| `npm run prisma:migrate -- --name <name>` | 開発用 migration を作成・適用              |
+| `npm run prisma:deploy`                   | 既存 migration を適用                      |
+| `npm run prisma:seed`                     | 環境変数から開発用ユーザーを初期化（任意） |
+| `npm run prisma:studio`                   | Prisma Studio を起動                       |
+| `npm run format`                          | Prettier でソースとテストファイルを整形    |
+| `npm run lint`                            | ESLint による読み取り専用の静的検査        |
+
+## Migration と test
+
+migration は API 起動時に自動適用されません。新規 clone 後、または schema を変更した後に PostgreSQL を起動してから、次を実行してください。
+
+```bash
+npm ci
+npm run prisma:generate
+npm run prisma:deploy
+```
+
+開発用 schema migration を新規作成するときは `npm run prisma:migrate -- --name <migration_name>` を実行してください。migration を適用した後、必要なら API を `npm run start:dev` で起動します。
+
+| Command                           | 内容 / 前提                                                                                                                       |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run build`                   | TypeScript / NestJS production build                                                                                              |
+| `npm run lint`                    | ESLint 静的検査。ファイルは変更しません                                                                                           |
+| `npm test -- --runInBand`         | unit tests。外部サービスを必要としません                                                                                          |
+| `npm run test:e2e -- --runInBand` | 全 e2e tests。PostgreSQL / Redis を起動し、migration を適用してから実行します。テストは専用のランダムデータを作成・cleanup します |
+| `npm run test:cov`                | unit test coverage                                                                                                                |
+
+全体を手動で確認するには、依存サービスの起動と migration の適用後、上記 build、lint、unit、e2e の各 command を順に実行します。GitHub Actions でも同じ検査を実行します（[CI workflow](../.github/workflows/ci.yml)）。
+
+## CI
+
+GitHub Actions は push、pull request、手動実行時に [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml) を実行します。PostgreSQL 16 と Redis 7 を起動し、依存関係の導入、Prisma Client 生成、migration 適用の後に build、lint、unit test、e2e test を実行します。CI 専用のテスト接続情報を workflow 内で使用し、production secret は必要ありません。
 
 ## 現在の実装状況
 
 - `GET /` と `GET /health` を提供します。
 - 成功 response は `{ "success": true, "data": ... }`、error response は設計書に沿った envelope で返します。
+- Swagger UI は API 起動後に `http://localhost:3000/docs`、OpenAPI JSON は `http://localhost:3000/docs-json` で確認できます。endpoint、path/query parameter、request DTO、multipart attachment upload と bearer authentication を掲載しています。保護された API は Swagger UI の Authorize に access token を入力して実行できます。
+- Error envelope は `{ "success": false, "error": { "code": ..., "message": ..., "details": [...] } }` です。400 / 401 / 403 / 404 / 409 / 429 は個別の error code に対応し、500 は内部情報を返さず `INTERNAL_SERVER_ERROR` として記録します。
 - 環境変数の起動時検証、DTO validation、例外処理、request ID 付き Pino logging を設定しています。
-- Helmet、CORS allowlist、全体の rate limit を設定しています。認証 route 用の `AuthRateLimit` decorator は認証 API の追加時に適用します。
-- 初期 scaffold、response envelope、health check、error response、request ID の unit test / e2e test が含まれます。
+- Helmet、CORS allowlist、全体の rate limit と認証 route 専用 rate limit を設定しています。
+- 認証、workspace/project/task、コメント、添付、統計、通知、response/error mapping、OpenAPI の unit test / e2e test が含まれます。
 
 Workspace と認証の以下の endpoint を実装済みです。
 
@@ -132,7 +195,6 @@ Workspace と認証の以下の endpoint を実装済みです。
 以下の業務機能は未実装です。
 
 - attachment の download / delete API
-- Swagger / OpenAPI
 
 ## ディレクトリ構成
 

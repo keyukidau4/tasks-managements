@@ -9,7 +9,9 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AccessTokenGuard } from '../auth/access-token.guard';
+import { ApiUuidParams } from '../common/decorators/api-uuid-params.decorator';
 import type { AuthUser } from '../auth/auth-user.interface';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
@@ -22,15 +24,20 @@ import { WorkspacesService } from './workspaces.service';
 
 @Controller('workspaces')
 @UseGuards(AccessTokenGuard, WorkspaceRolesGuard)
+@ApiTags('Workspaces')
+@ApiBearerAuth()
 export class WorkspacesController {
   constructor(private readonly workspacesService: WorkspacesService) {}
 
   @Post()
+  @ApiOperation({ summary: 'Create a workspace' })
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateWorkspaceDto) {
     return this.workspacesService.create(user.sub, dto);
   }
 
   @Get(':id')
+  @ApiOperation({ summary: 'Get a workspace' })
+  @ApiUuidParams('id')
   @WorkspaceRoles(
     WorkspaceRole.OWNER,
     WorkspaceRole.ADMIN,
@@ -44,6 +51,8 @@ export class WorkspacesController {
   }
 
   @Patch(':id')
+  @ApiOperation({ summary: 'Update a workspace' })
+  @ApiUuidParams('id')
   @WorkspaceRoles(WorkspaceRole.OWNER, WorkspaceRole.ADMIN)
   update(
     @CurrentUser() user: AuthUser,
@@ -54,6 +63,8 @@ export class WorkspacesController {
   }
 
   @Post(':id/members')
+  @ApiOperation({ summary: 'Invite a workspace member' })
+  @ApiUuidParams('id')
   @WorkspaceRoles(WorkspaceRole.OWNER, WorkspaceRole.ADMIN)
   inviteMember(
     @CurrentUser() user: AuthUser,
@@ -68,6 +79,8 @@ export class WorkspacesController {
   }
 
   @Delete(':id/members/:userId')
+  @ApiOperation({ summary: 'Remove a workspace member' })
+  @ApiUuidParams('id', 'userId')
   @WorkspaceRoles(WorkspaceRole.OWNER, WorkspaceRole.ADMIN)
   removeMember(
     @CurrentUser() user: AuthUser,

@@ -302,6 +302,45 @@ describe('Tasks (e2e)', () => {
       .expect(404);
   });
 
+  it('allows only one of two concurrent updates with the same task version', async () => {
+    const owner = await createAuthenticatedUser();
+    const workspace = await createWorkspace(owner.accessToken);
+    const project = await createProject(owner.accessToken, workspace.id);
+    const created = await request(app.getHttpServer())
+      .post(`/projects/${project.id}/tasks`)
+      .auth(owner.accessToken, { type: 'bearer' })
+      .send({ title: 'Concurrent update task' })
+      .expect(201);
+    const task = envelopeData<TaskResponse>(created.body);
+    taskIds.push(task.id);
+
+    const responses = await Promise.all([
+      request(app.getHttpServer())
+        .patch(`/tasks/${task.id}`)
+        .auth(owner.accessToken, { type: 'bearer' })
+        .send({ version: task.version, title: 'Concurrent update A' }),
+      request(app.getHttpServer())
+        .patch(`/tasks/${task.id}`)
+        .auth(owner.accessToken, { type: 'bearer' })
+        .send({ version: task.version, title: 'Concurrent update B' }),
+    ]);
+
+    expect(responses.map(({ status }) => status).sort()).toEqual([200, 409]);
+    const conflict = responses.find(({ status }) => status === 409);
+    const conflictEnvelope = conflict?.body as
+      { success: boolean; error: { code: string } } | undefined;
+    expect(conflictEnvelope?.success).toBe(false);
+    expect(conflictEnvelope?.error.code).toBe('CONFLICT');
+    const updated = await app.get(PrismaService).task.findUniqueOrThrow({
+      where: { id: task.id },
+      select: { title: true, version: true },
+    });
+    expect(['Concurrent update A', 'Concurrent update B']).toContain(
+      updated.title,
+    );
+    expect(updated.version).toBe(task.version + 1);
+  });
+
   it('filters, sorts, and paginates tasks with the documented defaults', async () => {
     const owner = await createAuthenticatedUser();
     const assignee = await createAuthenticatedUser();

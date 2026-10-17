@@ -7,7 +7,9 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AccessTokenGuard } from '../auth/access-token.guard';
+import { ApiUuidParams } from '../common/decorators/api-uuid-params.decorator';
 import type { AuthUser } from '../auth/auth-user.interface';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { WorkspaceRole } from '../workspaces/workspace-role.enum';
@@ -18,10 +20,14 @@ import { ProjectsService } from './projects.service';
 
 @Controller('workspaces/:workspaceId/projects')
 @UseGuards(AccessTokenGuard, WorkspaceRolesGuard)
+@ApiTags('Projects')
+@ApiBearerAuth()
 export class WorkspaceProjectsController {
   constructor(private readonly projectsService: ProjectsService) {}
 
   @Post()
+  @ApiOperation({ summary: 'Create a project in a workspace' })
+  @ApiUuidParams('workspaceId')
   @WorkspaceRoles(WorkspaceRole.OWNER, WorkspaceRole.ADMIN)
   create(
     @CurrentUser() user: AuthUser,
@@ -32,6 +38,8 @@ export class WorkspaceProjectsController {
   }
 
   @Get()
+  @ApiOperation({ summary: 'List projects in a workspace' })
+  @ApiUuidParams('workspaceId')
   @WorkspaceRoles(
     WorkspaceRole.OWNER,
     WorkspaceRole.ADMIN,

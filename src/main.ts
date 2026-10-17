@@ -4,6 +4,7 @@ import { Logger } from 'nestjs-pino';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
+import { setupOpenApi } from './common/openapi';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -26,6 +27,8 @@ async function bootstrap() {
       transform: true,
     }),
   );
+
+  setupOpenApi(app);
 
   await app.listen(config.getOrThrow<number>('PORT'));
 }

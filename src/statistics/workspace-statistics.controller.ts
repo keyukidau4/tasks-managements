@@ -5,7 +5,9 @@ import {
   ParseUUIDPipe,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AccessTokenGuard } from '../auth/access-token.guard';
+import { ApiUuidParams } from '../common/decorators/api-uuid-params.decorator';
 import type { AuthUser } from '../auth/auth-user.interface';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { WorkspaceRole } from '../workspaces/workspace-role.enum';
@@ -15,10 +17,14 @@ import { StatisticsService } from './statistics.service';
 
 @Controller('workspaces/:id/statistics')
 @UseGuards(AccessTokenGuard, WorkspaceRolesGuard)
+@ApiTags('Statistics')
+@ApiBearerAuth()
 export class WorkspaceStatisticsController {
   constructor(private readonly statisticsService: StatisticsService) {}
 
   @Get('workload')
+  @ApiOperation({ summary: 'Get workspace member task workload' })
+  @ApiUuidParams('id')
   @WorkspaceRoles(
     WorkspaceRole.OWNER,
     WorkspaceRole.ADMIN,
@@ -32,6 +38,8 @@ export class WorkspaceStatisticsController {
   }
 
   @Get('overdue')
+  @ApiOperation({ summary: 'List overdue tasks in a workspace' })
+  @ApiUuidParams('id')
   @WorkspaceRoles(
     WorkspaceRole.OWNER,
     WorkspaceRole.ADMIN,
