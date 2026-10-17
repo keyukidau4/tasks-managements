@@ -49,6 +49,27 @@ export const configurationSchema = Joi.object({
     then: Joi.required(),
     otherwise: Joi.optional(),
   }),
+  SMTP_HOST: Joi.string()
+    .hostname()
+    .when('NODE_ENV', {
+      is: 'production',
+      then: Joi.required(),
+      otherwise: Joi.string().hostname().default('localhost'),
+    }),
+  SMTP_PORT: Joi.number().port().default(1025),
+  SMTP_SECURE: Joi.boolean().default(false),
+  SMTP_USER: Joi.string().min(1).optional(),
+  SMTP_PASS: Joi.string().min(1).optional(),
+  SMTP_FROM: Joi.string()
+    .email()
+    .when('NODE_ENV', {
+      is: 'production',
+      then: Joi.required(),
+      otherwise: Joi.string().email().default('noreply@localhost.test'),
+    }),
+  APP_URL: Joi.string()
+    .uri({ scheme: ['http', 'https'] })
+    .default('http://localhost:5173'),
   JWT_ACCESS_SECRET: Joi.string().min(32).when('NODE_ENV', {
     is: 'production',
     then: Joi.required(),
@@ -60,4 +81,4 @@ export const configurationSchema = Joi.object({
   LOG_LEVEL: Joi.string()
     .valid('trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent')
     .default('info'),
-});
+}).and('SMTP_USER', 'SMTP_PASS');

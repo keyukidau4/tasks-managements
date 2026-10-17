@@ -4,7 +4,9 @@ describe('configurationSchema JWT secret validation', () => {
   const productionConfig = {
     NODE_ENV: 'production',
     REDIS_PASSWORD: 'test-redis-password',
-    DATABASE_URL: 'postgresql://app:password@localhost:5432/tasks',
+    SMTP_HOST: 'smtp.example.com',
+    SMTP_FROM: 'noreply@example.com',
+    DATABASE_URL: 'postgresql://localhost:5432/tasks',
   };
 
   it('requires a strong JWT access secret in production', () => {
@@ -45,6 +47,7 @@ describe('configurationSchema Redis validation', () => {
     const result = configurationSchema.validate({
       NODE_ENV: 'development',
     });
+
     expect(result.error).toBeUndefined();
     expect(result).toMatchObject({
       value: {
@@ -57,6 +60,48 @@ describe('configurationSchema Redis validation', () => {
   it('requires a Redis password in production', () => {
     const { error } = configurationSchema.validate({
       NODE_ENV: 'production',
+    });
+
+    expect(error).toBeDefined();
+  });
+});
+
+describe('configurationSchema SMTP validation', () => {
+  it('provides local Mailpit SMTP defaults', () => {
+    const result = configurationSchema.validate({
+      NODE_ENV: 'development',
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value).toMatchObject({
+      SMTP_HOST: 'localhost',
+      SMTP_PORT: 1025,
+      SMTP_SECURE: false,
+      SMTP_FROM: 'noreply@localhost.test',
+      APP_URL: 'http://localhost:5173',
+    });
+  });
+
+  it('requires SMTP host and sender configuration in production', () => {
+    const { error } = configurationSchema.validate(
+      {
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgresql://localhost:5432/tasks',
+        JWT_ACCESS_SECRET: 'a'.repeat(32),
+        REDIS_PASSWORD: 'test-redis-password',
+      },
+      { abortEarly: false },
+    );
+
+    expect(error?.details.map(({ path }) => path)).toEqual(
+      expect.arrayContaining([['SMTP_HOST'], ['SMTP_FROM']]),
+    );
+  });
+
+  it('requires SMTP username and password together', () => {
+    const { error } = configurationSchema.validate({
+      NODE_ENV: 'development',
+      SMTP_USER: 'mail-user',
     });
 
     expect(error).toBeDefined();

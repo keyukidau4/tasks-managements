@@ -1,8 +1,12 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Global, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { EmailService } from './email.service';
 import { NotificationProcessor } from './notification.processor';
-import { NOTIFICATIONS_QUEUE } from './queue.constants';
+import {
+  NOTIFICATION_JOB_OPTIONS,
+  NOTIFICATIONS_QUEUE,
+} from './queue.constants';
 
 @Global()
 @Module({
@@ -27,15 +31,10 @@ import { NOTIFICATIONS_QUEUE } from './queue.constants';
     }),
     BullModule.registerQueue({
       name: NOTIFICATIONS_QUEUE,
-      defaultJobOptions: {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 1000 },
-        removeOnComplete: { count: 1000 },
-        removeOnFail: { count: 1000 },
-      },
+      defaultJobOptions: NOTIFICATION_JOB_OPTIONS,
     }),
   ],
-  providers: [NotificationProcessor],
-  exports: [BullModule],
+  providers: [EmailService, NotificationProcessor],
+  exports: [BullModule, EmailService],
 })
 export class QueuesModule {}

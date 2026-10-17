@@ -41,9 +41,11 @@ npm run start:dev
 
 `.env` を作成しない場合も既定値で起動できます。ポートは `PORT`、ブラウザーからの接続を許可する origin は `CORS_ORIGINS`（カンマ区切り）で設定できます。許可 origin は完全な `http://` または `https://` origin で指定してください。設定対象の環境変数に不正な値がある場合、API は起動時にエラーにします。
 
-BullMQ は `REDIS_HOST`（既定値 `localhost`）、`REDIS_PORT`（既定値 `6379`）、任意の `REDIS_PASSWORD` で Redis に接続します。ローカル Compose の Redis は localhost のみに bind し、password なしで動作します。password を使う場合は `.env` にだけ設定し、本番では secret store から `REDIS_PASSWORD` を必ず渡してください（production では未設定だと起動時 validation に失敗します）。`notifications` queue は同時に 5 job を処理し、失敗時は指数 backoff で最大 3 回試行します。現在の worker は job の受信を確認して metadata のみを記録します。実際の email 送信処理は後続の通知タスクで接続します。
+BullMQ は `REDIS_HOST`（既定値 `localhost`）、`REDIS_PORT`（既定値 `6379`）、任意の `REDIS_PASSWORD` で Redis に接続します。ローカル Compose の Redis は localhost のみに bind し、password なしで動作します。password を使う場合は `.env` にだけ設定し、本番では secret store から `REDIS_PASSWORD` を必ず渡してください（production では未設定だと起動時 validation に失敗します）。`notifications` queue は同時に 5 job を処理し、失敗時は指数 backoff で合計最大 3 回試行します。最終失敗 job は Redis に最大 1,000 件保持され、各失敗 attempt と最終失敗は log に記録します。
 
-Task 作成時に assignee を指定した場合、および `PATCH /tasks/:id` で assignee が実際に変更された場合、`task-assigned` email job を `notifications` queue に登録します。job payload には recipient の email/name、task/project 名、操作ユーザー名を含みます。同一 task version の重複 enqueue は BullMQ の job ID で抑止します。Mailpit / Nodemailer による実際の送信は次の通知タスクで接続します。
+Task 作成時に assignee を指定した場合、および `PATCH /tasks/:id` で assignee が実際に変更された場合、`task-assigned` email job を `notifications` queue に登録します。job payload には recipient の email/name、task/project 名、操作ユーザー名を含みます。同一 task version の重複 enqueue は BullMQ の job ID で抑止します。
+
+Email は Nodemailer から SMTP 送信します。ローカルの既定接続は `SMTP_HOST=localhost`、`SMTP_PORT=1025`、`SMTP_SECURE=false`、`SMTP_FROM=noreply@localhost.test` で Mailpit を使います。送信元アプリのリンク URL は `APP_URL`（既定値 `http://localhost:5173`）で指定します。本番では `SMTP_HOST` と `SMTP_FROM` を設定してください。SMTP 認証を使う場合は `SMTP_USER` と `SMTP_PASS` の両方を secret store から渡します。HTML email の task/project/user text は escape して出力します。Mailpit UI は `http://localhost:8025` で確認できます。
 
 認証 API は `POST /auth/register`、`POST /auth/login`、`POST /auth/refresh`、`POST /auth/logout`、`GET /auth/me` を提供します。ログイン応答の refresh token は次回更新またはログアウト時に JSON body で送信します。アクセス token は 15 分の HS256 JWT、refresh token は 7 日のランダム token で、DB には SHA-256 hash のみ保存します。register / login / refresh / logout は各 route あたり 1 分 5 回に制限します。開発時の JWT secret はプロセスごとにランダム生成され、再起動すると既存 access token は無効になります。本番では `JWT_ACCESS_SECRET`（32 文字以上）を secret store から渡してください。値が未設定または短い場合、production 起動時の検証に失敗します。秘密値を `.env.example` やその他の version 管理対象ファイルに書かないでください。
 
@@ -66,7 +68,7 @@ docker compose up -d
 
 Compose は `.env` の値を使用します。MinIO credentials が未設定の場合は起動に失敗します。サービスを停止するには `docker compose down` を実行します。データ volume も削除する場合は `docker compose down -v` を実行してください。
 
-Redis と BullMQ の `notifications` queue / worker を実装しています。Mailpit を使った email 送信処理は未実装です。Prisma には User / Workspace と Task 管理用テーブルの schema / migration を含みます。
+Redis / BullMQ、task assignment notification worker、Nodemailer SMTP 送信と Mailpit ローカル受信を実装しています。Prisma には User / Workspace と Task 管理用テーブルの schema / migration を含みます。
 
 API は Prisma Client を使って PostgreSQL に接続します。`User` / `RefreshToken` / `Workspace` / `WorkspaceMember` / `Project` / `Task` / `TaskComment` / `TaskAttachment` / `AuditLog` の schema と migration を含みます。Project と Task は `deleted_at` による soft delete を使用します。通常削除ではレコードを保持し、関連コメント・添付も保持します。task の関連データが cascade delete されるのは task を物理削除した場合のみです。監査ログの `entity_id` は複数種類の entity を参照する polymorphic ID のため、単一テーブルへの FK は設定していません。
 
@@ -130,7 +132,6 @@ Workspace と認証の以下の endpoint を実装済みです。
 以下の業務機能は未実装です。
 
 - attachment の download / delete API
-- Redis/BullMQ による email job、Nodemailer、Redis / Mailpit 連携
 - Swagger / OpenAPI
 
 ## ディレクトリ構成
